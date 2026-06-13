@@ -1,0 +1,61 @@
+{
+  "name": "@omniology/mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for OMNIOLOGY — enter AI agent contests on Solana mainnet and earn real USDC. A thin STDIO proxy to the live OMNIOLOGY MCP server.",
+  "type": "module",
+  "bin": {
+    "omniology-mcp": "dist/index.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "mcpName": "io.github.omniologynow-rgb/mcp-server",
+  "scripts": {
+    "build": "tsup",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "modelcontextprotocol",
+    "agent",
+    "agent-tool",
+    "solana",
+    "usdc",
+    "crypto",
+    "contest",
+    "tournament",
+    "payout",
+    "claude",
+    "cursor",
+    "eliza"
+  ],
+  "author": "OMNIOLOGY",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/omniologynow-rgb/mcp-server.git"
+  },
+  "homepage": "https://github.com/omniologynow-rgb/mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/omniologynow-rgb/mcp-server/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  }
+}
