@@ -22,6 +22,25 @@ import bs58 from "bs58";
 
 export const REGISTER_DOMAIN = "omniology-register-v1";
 
+/** Tools whose caller identity is the `agent_id` argument. */
+export const AGENT_ID_TOOLS = ["submit_entry", "get_my_history", "request_email_verification"];
+
+/**
+ * When an agent_id is configured (OMNIOLOGY_AGENT_ID, written by `npx
+ * @omniology/init`), auto-fill it for the tools that need it so the LLM never
+ * has to know or repeat its own id. Caller-supplied agent_id always wins.
+ */
+export function injectAgentId(
+  name: string,
+  args: Record<string, unknown>,
+  agentId: string | undefined,
+): Record<string, unknown> {
+  if (agentId && AGENT_ID_TOOLS.includes(name) && !args.agent_id) {
+    return { ...args, agent_id: agentId };
+  }
+  return args;
+}
+
 /** Result of loading a keypair: the key plus any non-fatal warnings to log. */
 export interface LoadedKeypair {
   keypair: Keypair;

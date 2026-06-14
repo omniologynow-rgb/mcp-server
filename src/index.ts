@@ -42,12 +42,15 @@ import {
   signAndBroadcast,
   confirmSignature,
   friendlyBroadcastError,
+  injectAgentId,
+  AGENT_ID_TOOLS,
   type LoadedKeypair,
 } from "./signer.js";
 
 const REMOTE_URL =
   process.env.OMNIOLOGY_MCP_URL ?? "https://omniology-engine.fly.dev/mcp";
 const API_TOKEN = process.env.OMNIOLOGY_API_TOKEN?.trim();
+const AGENT_ID = process.env.OMNIOLOGY_AGENT_ID?.trim();
 const RPC_URL =
   process.env.OMNIOLOGY_RPC_URL?.trim() || "https://api.mainnet-beta.solana.com";
 const ENTRY_CONFIRM_TIMEOUT_MS = Math.max(
@@ -277,15 +280,26 @@ function textResult(text: string, isError = false): ToolResult {
  * fields (the server fills the crypto in).
  */
 function autonomizeTools(tools: Tool[]): Tool[] {
-  return tools.map((t) => {
+  const haveAgentId = !!AGENT_ID;
+  // When agent_id is configured, drop it from required so the LLM doesn't think
+  // it must supply it (the server injects it).
+  const dropAgentId = (t: Tool): Tool => {
+    if (!haveAgentId || !AGENT_ID_TOOLS.includes(t.name)) return t;
+    const required = Array.isArray(t.inputSchema.required)
+      ? t.inputSchema.required.filter((r) => r !== "agent_id")
+      : t.inputSchema.required;
+    return { ...t, inputSchema: { ...t.inputSchema, required } };
+  };
+  return tools.map((tool) => {
+    const t = dropAgentId(tool);
     if (t.name === "submit_entry") {
       return {
         ...t,
         description:
-          "Enter a contest. Just provide contest_id, agent_id, and your payload — " +
-          "the wallet signing and on-chain broadcast are handled for you automatically, " +
-          "and you get back a single confirmed result with your entry_id. You do NOT need " +
-          "to sign anything or pass transaction_signature.",
+          "Enter a contest. Just provide contest_id and your payload — your agent identity, " +
+          "wallet signing, and on-chain broadcast are all handled for you automatically, and " +
+          "you get back a single confirmed result with your entry_id. You do NOT need to sign " +
+          "anything or pass agent_id / transaction_signature.",
       };
     }
     if (t.name === "register_agent") {
@@ -408,22 +422,26 @@ async function main(): Promise<void> {
     try {
       const client = await getRemoteClient();
 
+      // Auto-fill agent_id (from OMNIOLOGY_AGENT_ID) so the LLM never has to
+      // know or repeat its own id. Applies in proxy mode too.
+      const callArgs = injectAgentId(name, args, AGENT_ID);
+
       // ── Autonomous mode (keypair loaded) ──────────────────────────────────
       if (signer) {
         // submit_entry without a tx signature → run the whole handshake for them.
-        if (name === "submit_entry" && !args.transaction_signature) {
-          return await autonomousSubmitEntry(client, signer, args);
+        if (name === "submit_entry" && !callArgs.transaction_signature) {
+          return await autonomousSubmitEntry(client, signer, callArgs);
         }
         // register_agent without a signature → sign in-process, fill wallet too.
-        if (name === "register_agent" && !args.signed_message) {
+        if (name === "register_agent" && !callArgs.signed_message) {
           const proof = buildRegisterProof(signer.keypair, Math.floor(Date.now() / 1000));
-          args.wallet_address = args.wallet_address ?? proof.wallet_address;
-          args.signed_message = proof.signed_message;
-          args.message_body = proof.message_body;
+          callArgs.wallet_address = callArgs.wallet_address ?? proof.wallet_address;
+          callArgs.signed_message = proof.signed_message;
+          callArgs.message_body = proof.message_body;
         }
       }
 
-      const result = await client.callTool({ name, arguments: args });
+      const result = await client.callTool({ name, arguments: callArgs });
       return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
