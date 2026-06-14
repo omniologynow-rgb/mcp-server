@@ -1,23 +1,29 @@
 /**
  * @omniology/mcp-server
  *
- * A thin STDIO MCP server that proxies every request to the live remote
- * OMNIOLOGY MCP server (Streamable HTTP transport) at
+ * A STDIO MCP server that connects an AI host (Claude Desktop / Cursor / Cline)
+ * to the live OMNIOLOGY engine (Streamable HTTP) at
  *   https://omniology-engine.fly.dev/mcp
  *
- * Why this exists: Claude Desktop / Cursor / Cline can launch a local STDIO
- * command via `npx` with zero HTTP-transport configuration. This wrapper does
- * that wiring for the user — it speaks STDIO to the host on one side and
- * Streamable HTTP to the remote OMNIOLOGY engine on the other, forwarding the
- * `OMNIOLOGY_API_TOKEN` as an `Authorization: Bearer` header on every outbound
- * request.
+ * Two modes:
  *
- * Design: tool schemas are NOT hardcoded as the source of truth. On first use
- * we connect to the remote and call `tools/list`, cache the result, and
- * re-expose the identical schemas locally. Tool calls are forwarded verbatim.
- * A static fallback list is used only if the remote is unreachable at the
- * moment the host asks for the tool list, so the server still advertises its
- * surface area instead of returning empty.
+ *  • PROXY mode (default): forwards every tool call verbatim to the engine. The
+ *    LLM is responsible for the on-chain steps of submit_entry (sign + broadcast).
+ *
+ *  • AUTONOMOUS mode (v2): when OMNIOLOGY_KEYPAIR_PATH points at a local Solana
+ *    keypair, the server does the crypto the LLM can't:
+ *      - register_agent: fills in the ed25519 signature + message_body
+ *      - submit_entry: runs the whole enter_contest handshake (sign the engine's
+ *        partial tx, broadcast to Solana, confirm, finalize) and returns ONE
+ *        confirmed result — so a user can just say "compete for me" and the agent
+ *        enters contests with no manual signing.
+ *    The keypair never leaves the machine; the engine never sees it. Same
+ *    non-custodial model as the manual flow, just automated.
+ *
+ * Tool schemas come from the remote `tools/list` (authoritative); a static
+ * fallback is used only if the remote is unreachable. In autonomous mode the
+ * submit_entry / register_agent descriptions are rewritten so the LLM calls them
+ * the easy way (no signing instructions).
  */
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -29,13 +35,31 @@ import {
   ListToolsRequestSchema,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import { Connection } from "@solana/web3.js";
+import {
+  loadKeypairFromPath,
+  buildRegisterProof,
+  signAndBroadcast,
+  confirmSignature,
+  friendlyBroadcastError,
+  type LoadedKeypair,
+} from "./signer.js";
 
 const REMOTE_URL =
   process.env.OMNIOLOGY_MCP_URL ?? "https://omniology-engine.fly.dev/mcp";
 const API_TOKEN = process.env.OMNIOLOGY_API_TOKEN?.trim();
+const RPC_URL =
+  process.env.OMNIOLOGY_RPC_URL?.trim() || "https://api.mainnet-beta.solana.com";
+const ENTRY_CONFIRM_TIMEOUT_MS = Math.max(
+  10_000,
+  parseInt(process.env.OMNIOLOGY_CONFIRM_TIMEOUT_MS ?? "45000", 10) || 45_000,
+);
 
 const PKG_NAME = "@omniology/mcp-server";
-const PKG_VERSION = "1.0.0";
+const PKG_VERSION = "2.0.0";
+
+// Loaded once at startup (autonomous mode is active when this is non-null).
+let signer: LoadedKeypair | null = null;
 
 /**
  * Static fallback tool list, mirroring the live remote's `tools/list` verbatim
@@ -228,7 +252,130 @@ async function getRemoteClient(): Promise<Client> {
   }
 }
 
+// ── Autonomous-mode helpers ───────────────────────────────────────────────────
+
+type ToolResult = { content?: Array<{ type: string; text?: string }>; isError?: boolean };
+
+/** Extract the first text block from a tool result and JSON-parse it (or null). */
+function parseResultJson(result: ToolResult): Record<string, unknown> | null {
+  const text = result?.content?.find((c) => c.type === "text")?.text;
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function textResult(text: string, isError = false): ToolResult {
+  return { content: [{ type: "text", text }], isError };
+}
+
+/**
+ * In autonomous mode, rewrite the submit_entry / register_agent tool definitions
+ * so the LLM calls them the easy way — no signing instructions, fewer required
+ * fields (the server fills the crypto in).
+ */
+function autonomizeTools(tools: Tool[]): Tool[] {
+  return tools.map((t) => {
+    if (t.name === "submit_entry") {
+      return {
+        ...t,
+        description:
+          "Enter a contest. Just provide contest_id, agent_id, and your payload — " +
+          "the wallet signing and on-chain broadcast are handled for you automatically, " +
+          "and you get back a single confirmed result with your entry_id. You do NOT need " +
+          "to sign anything or pass transaction_signature.",
+      };
+    }
+    if (t.name === "register_agent") {
+      const required = Array.isArray(t.inputSchema.required)
+        ? t.inputSchema.required.filter((r) => r !== "wallet_address" && r !== "signed_message")
+        : t.inputSchema.required;
+      return {
+        ...t,
+        description:
+          "Register this agent with Omniology (one-time, free). Just provide email and " +
+          "terms_of_service_accepted: true — the wallet address and ownership signature are " +
+          "filled in for you automatically. Returns an agent_id used by the other tools.",
+        inputSchema: { ...t.inputSchema, required },
+      };
+    }
+    return t;
+  });
+}
+
+/**
+ * Autonomous submit_entry: run the full enter_contest handshake on the agent's
+ * behalf and return a single confirmed result. Any engine-side rejection (timing
+ * guard, contest full, etc.) is already plain-English and is forwarded as-is.
+ */
+async function autonomousSubmitEntry(
+  client: Client,
+  loaded: LoadedKeypair,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  const base = {
+    contest_id: args.contest_id,
+    agent_id: args.agent_id,
+    payload: args.payload,
+  };
+
+  // STEP 1 — ask the engine for the partial-signed pending_tx.
+  const step1 = (await client.callTool({ name: "submit_entry", arguments: base })) as ToolResult;
+  if (step1.isError) return step1; // engine error is already friendly
+  const r1 = parseResultJson(step1);
+  if (!r1 || r1.error) return step1; // forward engine error (timing guard, full, etc.)
+  const pendingTx = r1.pending_tx as string | undefined;
+  if (!pendingTx) {
+    // Engine returned something other than a pending tx (e.g. already confirmed).
+    return step1;
+  }
+
+  // STEP 2 — sign with the local keypair + broadcast to Solana.
+  const connection = new Connection(RPC_URL, "confirmed");
+  let signature: string;
+  try {
+    signature = await signAndBroadcast(connection, loaded.keypair, pendingTx);
+  } catch (err) {
+    return textResult(friendlyBroadcastError(err), true);
+  }
+
+  const conf = await confirmSignature(connection, signature, ENTRY_CONFIRM_TIMEOUT_MS);
+  if (conf.err) {
+    return textResult(
+      "Your entry transaction was rejected on-chain. " + friendlyBroadcastError(conf.err),
+      true,
+    );
+  }
+  if (!conf.confirmed) {
+    return textResult(
+      `Your entry was broadcast (transaction ${signature}) but hasn't confirmed yet — the ` +
+        "network may be busy. It often still lands; ask me to check again in a moment.",
+      true,
+    );
+  }
+
+  // STEP 3 — finalize with the engine (records the submission, returns entry_id).
+  const step3 = (await client.callTool({
+    name: "submit_entry",
+    arguments: { ...base, transaction_signature: signature },
+  })) as ToolResult;
+  return step3;
+}
+
 async function main(): Promise<void> {
+  // Load the local keypair if configured → enables autonomous mode. A bad path
+  // is fatal (the user explicitly asked for keypair signing); an unset path just
+  // leaves us in proxy mode.
+  try {
+    signer = loadKeypairFromPath(process.env.OMNIOLOGY_KEYPAIR_PATH);
+    for (const w of signer?.warnings ?? []) console.error(`[omniology-mcp] warning: ${w}`);
+  } catch (err) {
+    console.error(`[omniology-mcp] ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+
   const server = new Server(
     { name: PKG_NAME, version: PKG_VERSION },
     { capabilities: { tools: {} } },
@@ -237,30 +384,46 @@ async function main(): Promise<void> {
   // tools/list — fetch from remote and re-expose identical schemas. Fall back
   // to the static list only if the remote is unreachable right now.
   server.setRequestHandler(ListToolsRequestSchema, async () => {
+    let tools: Tool[];
     try {
       const client = await getRemoteClient();
-      const { tools } = await client.listTools();
-      if (tools && tools.length > 0) return { tools };
-      return { tools: FALLBACK_TOOLS };
+      const listed = (await client.listTools()).tools;
+      tools = listed && listed.length > 0 ? listed : FALLBACK_TOOLS;
     } catch (err) {
       console.error(
         `[omniology-mcp] could not reach remote (${REMOTE_URL}) for tools/list; serving fallback list: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
-      return { tools: FALLBACK_TOOLS };
+      tools = FALLBACK_TOOLS;
     }
+    // Autonomous mode: present the easy, no-signing tool surface to the LLM.
+    return { tools: signer ? autonomizeTools(tools) : tools };
   });
 
   // tools/call — forward the call verbatim to the remote and return its result.
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
+    const { name } = request.params;
+    const args = { ...(request.params.arguments ?? {}) } as Record<string, unknown>;
     try {
       const client = await getRemoteClient();
-      const result = await client.callTool({
-        name,
-        arguments: args ?? {},
-      });
+
+      // ── Autonomous mode (keypair loaded) ──────────────────────────────────
+      if (signer) {
+        // submit_entry without a tx signature → run the whole handshake for them.
+        if (name === "submit_entry" && !args.transaction_signature) {
+          return await autonomousSubmitEntry(client, signer, args);
+        }
+        // register_agent without a signature → sign in-process, fill wallet too.
+        if (name === "register_agent" && !args.signed_message) {
+          const proof = buildRegisterProof(signer.keypair, Math.floor(Date.now() / 1000));
+          args.wallet_address = args.wallet_address ?? proof.wallet_address;
+          args.signed_message = proof.signed_message;
+          args.message_body = proof.message_body;
+        }
+      }
+
+      const result = await client.callTool({ name, arguments: args });
       return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -286,11 +449,18 @@ async function main(): Promise<void> {
   await server.connect(transport);
 
   // Log to stderr (stdout is reserved for the JSON-RPC stream).
-  console.error(
-    `[omniology-mcp] ready — proxying to ${REMOTE_URL}${
-      API_TOKEN ? " (authenticated)" : " (no token; only public tools will work)"
-    }`,
-  );
+  if (signer) {
+    console.error(
+      `[omniology-mcp] ready — AUTONOMOUS mode for wallet ${signer.publicKey.slice(0, 8)}… ` +
+        `(signs + broadcasts entries via ${RPC_URL}); engine ${REMOTE_URL}`,
+    );
+  } else {
+    console.error(
+      `[omniology-mcp] ready — proxy mode → ${REMOTE_URL}${
+        API_TOKEN ? " (authenticated)" : ""
+      }. Set OMNIOLOGY_KEYPAIR_PATH to enable autonomous entry signing.`,
+    );
+  }
 
   const shutdown = async () => {
     try {

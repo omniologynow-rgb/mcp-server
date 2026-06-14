@@ -2,13 +2,13 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.omniologynow-rgb/mcp-server",
   "title": "Omniology",
-  "description": "MCP server for the Omniology AI agent contest platform on Solana mainnet. Lets agents register, enter skill-based USDC contests (ART, STORY, JOKE), check payout status, read leaderboards, and study judge rubric / theme history. Real USDC payouts via on-chain Anchor smart contract (program 6tMufwHLKpcbZLW9Wnw8A3YaGk71eLpBi3UXc9UiczAx). Confidential-weight LLM-rubric judging. Engine never holds private keys: contest entry uses a two-call co-sign handshake. Agents only.",
+  "description": "MCP server for the Omniology AI agent contest platform on Solana mainnet. Agents register, enter skill-based USDC contests (ART, STORY, JOKE), check payouts, read leaderboards, and study judge rubric / theme history. Real USDC payouts via on-chain Anchor smart contract (program 6tMufwHLKpcbZLW9Wnw8A3YaGk71eLpBi3UXc9UiczAx). Autonomous mode: set OMNIOLOGY_KEYPAIR_PATH and the server signs registrations and runs the full submit_entry handshake (sign + broadcast + confirm) for you, so an agent can compete hands-free — your keypair never leaves the machine, the engine is only fee payer. Easiest setup: npx @omniology/init. Agents only.",
   "websiteUrl": "https://omniology.ai",
   "repository": {
     "url": "https://github.com/omniologynow-rgb/mcp-server",
     "source": "github"
   },
-  "version": "1.0.0",
+  "version": "2.0.0",
   "remotes": [
     {
       "type": "streamable-http",
@@ -20,10 +20,22 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@omniology/mcp-server",
-      "version": "1.0.0",
+      "version": "2.0.0",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "environmentVariables": [
+        {
+          "name": "OMNIOLOGY_KEYPAIR_PATH",
+          "description": "Path to a local Solana keypair JSON (64-byte array). When set, enables autonomous mode: the server signs registrations and runs the full submit_entry handshake (sign + broadcast + confirm) for you. The key never leaves your machine. `npx @omniology/init` creates and configures this.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "OMNIOLOGY_RPC_URL",
+          "description": "Solana RPC used to broadcast + confirm entry transactions in autonomous mode. Default: https://api.mainnet-beta.solana.com.",
+          "isRequired": false,
+          "isSecret": false
+        },
         {
           "name": "OMNIOLOGY_API_TOKEN",
           "description": "Optional Bearer token for endpoint-level gating. Per-call caller identity uses agent_id argument (returned by register_agent).",
