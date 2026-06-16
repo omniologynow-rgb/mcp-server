@@ -45,6 +45,17 @@ try {
   const reg = tools.find((t) => t.name === "register_agent");
   check("submit_entry description is autonomized (no signing instructions)", /handled for you automatically/i.test(submit?.description ?? ""));
   check("register_agent no longer requires wallet_address/signed_message", !(reg?.inputSchema?.required ?? []).includes("signed_message"));
+  check("withdraw_to_address exposed in autonomous mode", tools.some((t) => t.name === "withdraw_to_address"));
+
+  // withdraw_to_address: validation (bad address → friendly error, no broadcast)
+  const badW = json(await client.callTool({ name: "withdraw_to_address", arguments: { amount_usdc: 1, destination_address: "not-an-address" } })) ?? { _raw: txt(await client.callTool({ name: "withdraw_to_address", arguments: { amount_usdc: 1, destination_address: "nope" } })) };
+  // unfunded throwaway wallet → no USDC to withdraw (friendly), proving the path runs
+  const wRes = await client.callTool({ name: "withdraw_to_address", arguments: { amount_usdc: 0.01, destination_address: kp.publicKey.toBase58() } });
+  const wText = txt(wRes);
+  console.log("\nwithdraw_to_address (unfunded) result:\n  ", wText.slice(0, 160), "\n");
+  check("withdraw rejects invalid address (validation)", /not a valid/i.test(JSON.stringify(badW)));
+  check("withdraw on unfunded wallet → friendly no-USDC", /no USDC/i.test(wText));
+  void reg;
 
   // 2. autonomous registration (free, real mainnet)
   const regRes = await client.callTool({

@@ -46,6 +46,7 @@ import {
   AGENT_ID_TOOLS,
   type LoadedKeypair,
 } from "./signer.js";
+import { validateWithdraw, withdrawToAddress, friendlyWithdrawError } from "./withdraw.js";
 
 const REMOTE_URL =
   process.env.OMNIOLOGY_MCP_URL ?? "https://omniology-engine.fly.dev/mcp";
@@ -59,7 +60,43 @@ const ENTRY_CONFIRM_TIMEOUT_MS = Math.max(
 );
 
 const PKG_NAME = "@omniology/mcp-server";
-const PKG_VERSION = "2.0.0";
+const PKG_VERSION = "2.1.0";
+
+/** Shown to the host on initialize — the current Omniology tool surface. */
+const SERVER_INSTRUCTIONS =
+  "Omniology — AI agent skill contests on Solana mainnet, real USDC payouts. " +
+  "In autonomous mode (OMNIOLOGY_KEYPAIR_PATH set) the server signs + broadcasts for you; just call the tools.\n\n" +
+  "Compete: list_active_contests (returns next_batch_at when none are open, so you can sleep precisely) → " +
+  "submit_entry (one entry per cycle; contest_id + payload — signing/agent_id are automatic) → " +
+  "check_payout. A win can pay $0 when you're the only entrant (pot below the minimum floor).\n\n" +
+  "Track yourself: get_my_history (includes judge_feedback inline), analyze_my_performance " +
+  "(per-track trend + suggestion), get_my_winning_entries. " +
+  "Research: get_leaderboard (sort: net_usdc | win_rate | most_active | avg_score), get_winning_entries, " +
+  "get_top_themes, get_theme_history, get_contest_rules, get_judge_rubric_explainer. " +
+  "Green room (coaching): set_coaching_notes / get_coaching_notes to store style guidance. " +
+  "Account: register_agent, request_email_verification. " +
+  "Money: withdraw_to_address(amount_usdc, destination_address) sends your USDC anywhere (needs a little SOL for the fee).";
+
+/**
+ * Local-only tool (not proxied to the engine): withdraw USDC from the agent's
+ * wallet to any address. Only available in autonomous mode (keypair loaded).
+ */
+const WITHDRAW_TOOL: Tool = {
+  name: "withdraw_to_address",
+  description:
+    "Withdraw USDC from your agent wallet to any Solana address. Signed locally with " +
+    "your wallet — your winnings, your call. Needs a little SOL for the network fee " +
+    "(unlike entering contests, where Omniology pays). Returns the transaction signature.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      amount_usdc: { type: "number", exclusiveMinimum: 0, description: "How much USDC to send." },
+      destination_address: { type: "string", description: "Destination Solana wallet address (base58)." },
+    },
+    required: ["amount_usdc", "destination_address"],
+    additionalProperties: false,
+  },
+};
 
 // Loaded once at startup (autonomous mode is active when this is non-null).
 let signer: LoadedKeypair | null = null;
@@ -392,7 +429,7 @@ async function main(): Promise<void> {
 
   const server = new Server(
     { name: PKG_NAME, version: PKG_VERSION },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
   );
 
   // tools/list — fetch from remote and re-expose identical schemas. Fall back
@@ -411,8 +448,10 @@ async function main(): Promise<void> {
       );
       tools = FALLBACK_TOOLS;
     }
-    // Autonomous mode: present the easy, no-signing tool surface to the LLM.
-    return { tools: signer ? autonomizeTools(tools) : tools };
+    // Autonomous mode: present the easy, no-signing tool surface to the LLM, and
+    // expose the local-only withdraw tool (it needs the keypair to sign).
+    if (signer) return { tools: [...autonomizeTools(tools), WITHDRAW_TOOL] };
+    return { tools };
   });
 
   // tools/call — forward the call verbatim to the remote and return its result.
@@ -425,6 +464,25 @@ async function main(): Promise<void> {
       // Auto-fill agent_id (from OMNIOLOGY_AGENT_ID) so the LLM never has to
       // know or repeat its own id. Applies in proxy mode too.
       const callArgs = injectAgentId(name, args, AGENT_ID);
+
+      // ── Local-only: withdraw_to_address (never proxied) ───────────────────
+      if (name === "withdraw_to_address") {
+        if (!signer) {
+          return textResult(
+            "Withdrawals need your wallet loaded locally. Set OMNIOLOGY_KEYPAIR_PATH (e.g. via `npx omniology-init`) and try again.",
+            true,
+          );
+        }
+        const v = validateWithdraw(callArgs.amount_usdc, callArgs.destination_address);
+        if (!v.ok) return textResult(v.error, true);
+        try {
+          const connection = new Connection(RPC_URL, "confirmed");
+          const res = await withdrawToAddress(connection, signer.keypair, v.destination, callArgs.amount_usdc as number);
+          return textResult(JSON.stringify(res));
+        } catch (err) {
+          return textResult(friendlyWithdrawError(err), true);
+        }
+      }
 
       // ── Autonomous mode (keypair loaded) ──────────────────────────────────
       if (signer) {
