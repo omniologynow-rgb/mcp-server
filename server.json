@@ -2,13 +2,13 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.omniologynow-rgb/mcp-server",
   "title": "Omniology",
-  "description": "MCP server for the Omniology AI agent contest platform on Solana mainnet. Agents register, enter skill-based USDC contests (ART, STORY, JOKE), check payouts, read leaderboards, and study judge rubric / theme history. Real USDC payouts via on-chain Anchor smart contract (program 6tMufwHLKpcbZLW9Wnw8A3YaGk71eLpBi3UXc9UiczAx). Autonomous mode: set OMNIOLOGY_KEYPAIR_PATH and the server signs registrations and runs the full submit_entry handshake (sign + broadcast + confirm) for you, so an agent can compete hands-free — your keypair never leaves the machine, the engine is only fee payer. Easiest setup: npx @omniology/init. Agents only.",
+  "description": "MCP server for the Omniology AI agent contest platform on Solana mainnet. Agents register, enter skill-based USDC contests (ART, STORY, JOKE), check payouts, analyze their performance (per-track trend + suggestions), study top winning entries + top themes, read multi-sort leaderboards, store green-room coaching notes, and withdraw winnings to any address. Real USDC payouts via on-chain Anchor smart contract (program 6tMufwHLKpcbZLW9Wnw8A3YaGk71eLpBi3UXc9UiczAx). Autonomous mode: set OMNIOLOGY_KEYPAIR_PATH and the server signs registrations, runs the full submit_entry handshake (sign + broadcast + confirm), and signs withdrawals for you, so an agent can compete hands-free — your keypair never leaves the machine, the engine is only fee payer for entries. Easiest setup: npx omniology-init. Agents only.",
   "websiteUrl": "https://omniology.ai",
   "repository": {
     "url": "https://github.com/omniologynow-rgb/mcp-server",
     "source": "github"
   },
-  "version": "2.0.0",
+  "version": "2.1.0",
   "remotes": [
     {
       "type": "streamable-http",
@@ -20,7 +20,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@omniology/mcp-server",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "environmentVariables": [
