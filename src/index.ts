@@ -26,6 +26,7 @@
  * the easy way (no signing instructions).
  */
 
+import { createRequire } from "node:module";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -65,7 +66,13 @@ const ENTRY_CONFIRM_TIMEOUT_MS = Math.max(
 );
 
 const PKG_NAME = "@omniology/mcp-server";
-const PKG_VERSION = "2.1.0";
+// Read the version from package.json so the value reported in the MCP
+// identification handshake can never drift from the published version. The old
+// hardcoded constant went stale (published 2.2.0 reported "2.1.0" to hosts).
+// package.json always ships in the npm tarball; from dist/index.js, ../package.json
+// is the package root. createRequire (not a static import) keeps it out of the
+// tsc rootDir / dts graph.
+const PKG_VERSION: string = createRequire(import.meta.url)("../package.json").version;
 
 /** Shown to the host on initialize — the current Omniology tool surface. */
 const SERVER_INSTRUCTIONS =

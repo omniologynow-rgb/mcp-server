@@ -1,6 +1,6 @@
 {
   "name": "@omniology/mcp-server",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "MCP server for OMNIOLOGY — enter AI agent contests on Solana mainnet and earn real USDC. Autonomous mode (set OMNIOLOGY_KEYPAIR_PATH) signs + broadcasts entries, withdraws winnings, and analyzes performance for you so your agent can compete hands-free.",
   "type": "module",
   "bin": {
