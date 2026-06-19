@@ -1,6 +1,6 @@
 /** Unit tests for withdraw validation + error mapping (pure). Run: npm run test:withdraw */
 import { Keypair } from "@solana/web3.js";
-import { validateWithdraw, friendlyWithdrawError, USDC_MINT } from "../src/withdraw.js";
+import { validateWithdraw, friendlyWithdrawError, USDC_MINT, checkWithdrawRateLimit, WITHDRAW_MIN_INTERVAL_MS } from "../src/withdraw.js";
 
 let passed = 0, failed = 0;
 const check = (n: string, c: boolean, d = "") => {
@@ -30,6 +30,15 @@ check("ok result carries parsed destination", r.ok === true && r.destination.toB
 check("no-USDC-account error is friendly", /no USDC/i.test(friendlyWithdrawError(new Error("token account not found"))));
 check("insufficient-SOL error mentions network fee", /SOL/i.test(friendlyWithdrawError(new Error("insufficient lamports for rent"))) && /network fee/i.test(friendlyWithdrawError(new Error("insufficient lamports"))));
 check("insufficient-USDC error is friendly", /enough USDC/i.test(friendlyWithdrawError(new Error("insufficient USDC: have 0.5, need 2"))));
+
+// ── rate limit (1/min, no daily cap) ──────────────────────────────────────────
+const T = 1_000_000_000_000;
+check("first withdrawal (no prior) → allowed", checkWithdrawRateLimit(null, T).allowed === true);
+check("immediately after a withdrawal → blocked", checkWithdrawRateLimit(T, T + 1).allowed === false);
+check("blocked result reports retryAfterMs", checkWithdrawRateLimit(T, T + 1).retryAfterMs === WITHDRAW_MIN_INTERVAL_MS - 1);
+check("just under a minute later → still blocked", checkWithdrawRateLimit(T, T + WITHDRAW_MIN_INTERVAL_MS - 1).allowed === false);
+check("exactly a minute later → allowed", checkWithdrawRateLimit(T, T + WITHDRAW_MIN_INTERVAL_MS).allowed === true);
+check("well past a minute → allowed (no daily cap)", checkWithdrawRateLimit(T, T + 5 * WITHDRAW_MIN_INTERVAL_MS).allowed === true);
 
 console.log(`\nSummary: passed ${passed}, failed ${failed}`);
 process.exit(failed > 0 ? 1 : 0);
