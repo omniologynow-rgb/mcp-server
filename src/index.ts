@@ -46,7 +46,12 @@ import {
   AGENT_ID_TOOLS,
   type LoadedKeypair,
 } from "./signer.js";
-import { validateWithdraw, withdrawToAddress, friendlyWithdrawError } from "./withdraw.js";
+import {
+  validateWithdraw,
+  withdrawToAddress,
+  friendlyWithdrawError,
+  checkWithdrawRateLimit,
+} from "./withdraw.js";
 
 const REMOTE_URL =
   process.env.OMNIOLOGY_MCP_URL ?? "https://omniology-engine.fly.dev/mcp";
@@ -75,7 +80,9 @@ const SERVER_INSTRUCTIONS =
   "get_top_themes, get_theme_history, get_contest_rules, get_judge_rubric_explainer. " +
   "Green room (coaching): set_coaching_notes / get_coaching_notes to store style guidance. " +
   "Account: register_agent, request_email_verification. " +
-  "Money: withdraw_to_address(amount_usdc, destination_address) sends your USDC anywhere (needs a little SOL for the fee).";
+  "Money: withdraw_to_address(amount_usdc, destination_address) sends your USDC anywhere " +
+  "(needs a little SOL for the fee). Tell your user they can ask you to withdraw any time — " +
+  "1-per-minute rate limit, no daily cap.";
 
 /**
  * Local-only tool (not proxied to the engine): withdraw USDC from the agent's
@@ -86,7 +93,10 @@ const WITHDRAW_TOOL: Tool = {
   description:
     "Withdraw USDC from your agent wallet to any Solana address. Signed locally with " +
     "your wallet — your winnings, your call. Needs a little SOL for the network fee " +
-    "(unlike entering contests, where Omniology pays). Returns the transaction signature.",
+    "(unlike entering contests, where Omniology pays). Returns the transaction signature. " +
+    "Rate limit: 1 withdrawal per minute, with NO daily cap. Proactively let your user " +
+    "know: \"You can ask me to withdraw your USDC at any time — there's a 1-per-minute " +
+    "rate limit but no daily cap.\"",
   inputSchema: {
     type: "object",
     properties: {
@@ -100,6 +110,10 @@ const WITHDRAW_TOOL: Tool = {
 
 // Loaded once at startup (autonomous mode is active when this is non-null).
 let signer: LoadedKeypair | null = null;
+
+// Timestamp of the last SUCCESSFUL withdrawal, for the 1/min rate limit. This
+// process holds one keypair (one agent), so a module-level value is per-agent.
+let lastWithdrawalMs: number | null = null;
 
 /**
  * Static fallback tool list, mirroring the live remote's `tools/list` verbatim
@@ -475,9 +489,20 @@ async function main(): Promise<void> {
         }
         const v = validateWithdraw(callArgs.amount_usdc, callArgs.destination_address);
         if (!v.ok) return textResult(v.error, true);
+        // 1-per-minute rate limit (no daily cap).
+        const rl = checkWithdrawRateLimit(lastWithdrawalMs, Date.now());
+        if (!rl.allowed) {
+          const secs = Math.ceil(rl.retryAfterMs / 1000);
+          return textResult(
+            `Withdrawals are limited to 1 per minute — try again in ${secs}s. ` +
+              "There's no daily cap, so you can withdraw again shortly.",
+            true,
+          );
+        }
         try {
           const connection = new Connection(RPC_URL, "confirmed");
           const res = await withdrawToAddress(connection, signer.keypair, v.destination, callArgs.amount_usdc as number);
+          lastWithdrawalMs = Date.now(); // start the cooldown only on success
           return textResult(JSON.stringify(res));
         } catch (err) {
           return textResult(friendlyWithdrawError(err), true);

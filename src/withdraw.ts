@@ -39,6 +39,25 @@ export function validateWithdraw(
   return { ok: true, destination: pubkey };
 }
 
+/**
+ * Withdrawals are autonomous (the agent can withdraw on the user's behalf), so we
+ * apply a light client-side rate limit: at most 1 withdrawal per minute, no daily
+ * cap. This server process holds exactly one keypair (= one agent), so an
+ * in-process timestamp is a correct per-agent limiter. Pure + testable.
+ */
+export const WITHDRAW_MIN_INTERVAL_MS = 60_000;
+
+export function checkWithdrawRateLimit(
+  lastWithdrawalMs: number | null,
+  nowMs: number,
+  minIntervalMs: number = WITHDRAW_MIN_INTERVAL_MS,
+): { allowed: boolean; retryAfterMs: number } {
+  if (lastWithdrawalMs === null) return { allowed: true, retryAfterMs: 0 };
+  const elapsed = nowMs - lastWithdrawalMs;
+  if (elapsed >= minIntervalMs) return { allowed: true, retryAfterMs: 0 };
+  return { allowed: false, retryAfterMs: minIntervalMs - elapsed };
+}
+
 /** Map a withdraw failure to a plain-English message. */
 export function friendlyWithdrawError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
