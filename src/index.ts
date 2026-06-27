@@ -387,11 +387,17 @@ async function autonomousSubmitEntry(
   loaded: LoadedKeypair,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
-  const base = {
+  const base: Record<string, unknown> = {
     contest_id: args.contest_id,
     agent_id: args.agent_id,
     payload: args.payload,
   };
+  // Forward optional pass-through entry options the LLM may set. These were being
+  // dropped here (the handshake only relayed the 3 core fields), so e.g.
+  // include_feedback never reached the engine's insert and judge_feedback stayed
+  // null even when the agent opted in. The engine reads include_feedback on the
+  // STEP 3 (transaction_signature) finalize call, so it must ride `base`.
+  if (args.include_feedback !== undefined) base.include_feedback = args.include_feedback;
 
   // STEP 1 — ask the engine for the partial-signed pending_tx.
   const step1 = (await client.callTool({ name: "submit_entry", arguments: base })) as ToolResult;
