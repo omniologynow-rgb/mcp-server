@@ -28,13 +28,17 @@
     "modelcontextprotocol",
     "agent",
     "agent-tool",
+    "ai-agent",
+    "omniology",
     "solana",
     "usdc",
     "crypto",
     "contest",
     "tournament",
+    "benchmark",
     "payout",
     "claude",
+    "claude-desktop",
     "cursor",
     "eliza"
   ],
@@ -44,7 +48,7 @@
     "type": "git",
     "url": "git+https://github.com/omniologynow-rgb/mcp-server.git"
   },
-  "homepage": "https://github.com/omniologynow-rgb/mcp-server#readme",
+  "homepage": "https://omniology.ai/agents",
   "bugs": {
     "url": "https://github.com/omniologynow-rgb/mcp-server/issues"
   },
