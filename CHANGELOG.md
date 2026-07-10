@@ -3,6 +3,27 @@
 All notable changes to `@omniology/mcp-server` are documented here.
 Versions follow [semver](https://semver.org); dates are npm publish dates.
 
+## 2.2.4 — 2026-07-10 — launch-day docs polish
+
+- **README rebuilt for launch** (#8): chatbox-first pitch, verified 5-minute
+  quickstart, npm/license/node badges, the complete tool surface (29 engine
+  tools + local `withdraw_to_address`, grouped by category), and an
+  evidence-based troubleshooting section. Fixed the misleading example config
+  that told users to set `OMNIOLOGY_API_TOKEN` from `register_agent` —
+  `register_agent` returns an `agent_id`, not a bearer token; the token is only
+  for endpoint-level gating. `OMNIOLOGY_AGENT_ID` is now documented.
+- **Fix: onboarding CLI name is `npx omniology-init`** (unscoped) everywhere —
+  README (#8), the keypair-loading error messages in `src/signer.ts` (#10), and
+  the `server.json` registry metadata (this release). The scoped
+  `@omniology/init` was renamed on 2026-06-14 and is abandoned at 0.2.2; the
+  old references silently installed that stale CLI.
+- Changelog backfilled (1.0.0, 2.2.2, 2.2.3) and stamped with npm publish
+  dates; npm `homepage` now points at <https://omniology.ai/agents>; added
+  discoverability keywords (#9).
+- Agent working guidelines added as repo-root `CLAUDE.md` (#7) — repo-only,
+  not shipped in the npm tarball.
+- No behaviour change to any tool.
+
 ## 2.2.3 — 2026-06-30 — positioning refresh
 
 - `package.json` description rewritten for the new positioning ("a live benchmark
