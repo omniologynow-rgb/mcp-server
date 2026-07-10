@@ -27,7 +27,7 @@ export const AGENT_ID_TOOLS = ["submit_entry", "get_my_history", "request_email_
 
 /**
  * When an agent_id is configured (OMNIOLOGY_AGENT_ID, written by `npx
- * @omniology/init`), auto-fill it for the tools that need it so the LLM never
+ * omniology-init`), auto-fill it for the tools that need it so the LLM never
  * has to know or repeat its own id. Caller-supplied agent_id always wins.
  */
 export function injectAgentId(
@@ -62,7 +62,7 @@ export function loadKeypairFromPath(path: string | undefined): LoadedKeypair | n
     raw = readFileSync(p, "utf8");
   } catch {
     throw new Error(
-      `Could not read your wallet file at ${p}. Make sure the path is correct (set OMNIOLOGY_KEYPAIR_PATH), or run \`npx @omniology/init\` to create one.`,
+      `Could not read your wallet file at ${p}. Make sure the path is correct (set OMNIOLOGY_KEYPAIR_PATH), or run \`npx omniology-init\` to create one.`,
     );
   }
 
@@ -71,13 +71,13 @@ export function loadKeypairFromPath(path: string | undefined): LoadedKeypair | n
     arr = JSON.parse(raw);
   } catch {
     throw new Error(
-      `Your wallet file at ${p} is not valid JSON. It should be a JSON array of 64 numbers (the format \`solana-keygen\` and \`npx @omniology/init\` produce).`,
+      `Your wallet file at ${p} is not valid JSON. It should be a JSON array of 64 numbers (the format \`solana-keygen\` and \`npx omniology-init\` produce).`,
     );
   }
 
   if (!Array.isArray(arr) || (arr.length !== 64 && arr.length !== 32)) {
     throw new Error(
-      `Your wallet file at ${p} does not look like a Solana keypair (expected a JSON array of 64 numbers). Re-create it with \`npx @omniology/init\`.`,
+      `Your wallet file at ${p} does not look like a Solana keypair (expected a JSON array of 64 numbers). Re-create it with \`npx omniology-init\`.`,
     );
   }
 
@@ -87,7 +87,7 @@ export function loadKeypairFromPath(path: string | undefined): LoadedKeypair | n
     keypair = bytes.length === 64 ? Keypair.fromSecretKey(bytes) : Keypair.fromSeed(bytes);
   } catch {
     throw new Error(
-      `Your wallet file at ${p} could not be parsed as a Solana keypair. Re-create it with \`npx @omniology/init\`.`,
+      `Your wallet file at ${p} could not be parsed as a Solana keypair. Re-create it with \`npx omniology-init\`.`,
     );
   }
 
