@@ -44,6 +44,7 @@ import {
   confirmSignature,
   friendlyBroadcastError,
   injectAgentId,
+  toolTakesAgentId,
   AGENT_ID_TOOLS,
   type LoadedKeypair,
 } from "./signer.js";
@@ -117,6 +118,13 @@ const WITHDRAW_TOOL: Tool = {
 
 // Loaded once at startup (autonomous mode is active when this is non-null).
 let signer: LoadedKeypair | null = null;
+
+// Runtime-derived set of tool names that take an `agent_id` argument. Seeded
+// with the static core (so a tools/call issued before the first tools/list
+// still injects for the essentials) and re-populated from every live
+// `tools/list` — any tool whose schema declares agent_id joins the set, so the
+// OMNIOLOGY_AGENT_ID auto-inject never goes stale as the engine adds tools.
+const agentIdToolNames = new Set<string>(AGENT_ID_TOOLS);
 
 // Timestamp of the last SUCCESSFUL withdrawal, for the 1/min rate limit. This
 // process holds one keypair (one agent), so a module-level value is per-agent.
@@ -339,10 +347,12 @@ function textResult(text: string, isError = false): ToolResult {
  */
 function autonomizeTools(tools: Tool[]): Tool[] {
   const haveAgentId = !!AGENT_ID;
-  // When agent_id is configured, drop it from required so the LLM doesn't think
-  // it must supply it (the server injects it).
+  // When agent_id is configured, drop it from required on EVERY tool that takes
+  // one (schema-driven, not a hardcoded list) so the LLM doesn't think it must
+  // supply it — the server injects it on the call. Keeps the advertised schema
+  // and the injection behaviour in lock-step.
   const dropAgentId = (t: Tool): Tool => {
-    if (!haveAgentId || !AGENT_ID_TOOLS.includes(t.name)) return t;
+    if (!haveAgentId || !toolTakesAgentId(t)) return t;
     const required = Array.isArray(t.inputSchema.required)
       ? t.inputSchema.required.filter((r) => r !== "agent_id")
       : t.inputSchema.required;
@@ -475,6 +485,12 @@ async function main(): Promise<void> {
       );
       tools = FALLBACK_TOOLS;
     }
+    // Learn which tools take an agent_id from the authoritative schema so the
+    // OMNIOLOGY_AGENT_ID auto-inject covers all of them (applies in proxy mode
+    // too — injectAgentId only fires when AGENT_ID is actually set).
+    for (const t of tools) {
+      if (toolTakesAgentId(t)) agentIdToolNames.add(t.name);
+    }
     // Autonomous mode: present the easy, no-signing tool surface to the LLM, and
     // expose the local-only withdraw tool (it needs the keypair to sign).
     if (signer) return { tools: [...autonomizeTools(tools), WITHDRAW_TOOL] };
@@ -489,8 +505,9 @@ async function main(): Promise<void> {
       const client = await getRemoteClient();
 
       // Auto-fill agent_id (from OMNIOLOGY_AGENT_ID) so the LLM never has to
-      // know or repeat its own id. Applies in proxy mode too.
-      const callArgs = injectAgentId(name, args, AGENT_ID);
+      // know or repeat its own id. Applies in proxy mode too. The set of
+      // agent_id tools is derived from the live schema (see agentIdToolNames).
+      const callArgs = injectAgentId(name, args, AGENT_ID, agentIdToolNames);
 
       // ── Local-only: withdraw_to_address (never proxied) ───────────────────
       if (name === "withdraw_to_address") {
