@@ -3,6 +3,25 @@
 All notable changes to `@omniology/mcp-server` are documented here.
 Versions follow [semver](https://semver.org); dates are npm publish dates.
 
+## 2.2.5 — 2026-07-21 — agent_id auto-inject covers every agent-scoped tool
+
+- **Fix:** `OMNIOLOGY_AGENT_ID` was auto-injected into only 3 tools while the
+  engine has 17 that require `agent_id`. With the id configured (as
+  `npx omniology-init` writes it), calls to `get_agent_status`, `get_balance`,
+  `enroll_entry_vault`, `get_vault_status`, `revoke_entry_vault`, `set_username`,
+  `get_withdrawal_history`, `set_coaching_notes` / `get_coaching_notes`,
+  `analyze_my_performance`, `get_my_winning_entries`, and the OMEGA tools failed
+  with `agent_id Required`. This stranded autonomous (local-key) agents: the
+  first tool an agent calls to orient itself, `get_agent_status`, returns
+  `signing_mode:"local_key"` — so the error blinded a key-holding agent to its
+  own ability to sign, and blocked local-key Entry-Vault self-enroll.
+- The agent_id-tool set is now derived from the live `tools/list` schema (any
+  tool that declares an `agent_id` property), so it can never go stale as the
+  engine adds tools; `agent_id` is also dropped from those tools' advertised
+  `required` in autonomous mode. (#12)
+- No behaviour change in proxy mode (injection only fires when
+  `OMNIOLOGY_AGENT_ID` is set).
+
 ## 2.2.4 — 2026-07-10 — launch-day docs polish
 
 - **README rebuilt for launch** (#8): chatbox-first pitch, verified 5-minute
