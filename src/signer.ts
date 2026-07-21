@@ -17,25 +17,48 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { Connection, Keypair, Transaction, type Commitment } from "@solana/web3.js";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ed25519 } from "@noble/curves/ed25519";
 import bs58 from "bs58";
 
 export const REGISTER_DOMAIN = "omniology-register-v1";
 
-/** Tools whose caller identity is the `agent_id` argument. */
+/**
+ * Seed set of tools whose caller identity is the `agent_id` argument. This is
+ * only a COLD-START fallback: the authoritative list is derived at runtime from
+ * the live `tools/list` schema (any tool that declares an `agent_id` property),
+ * so it can never go stale as the engine adds agent-scoped tools. A hardcoded
+ * list here was the root cause of the injection gap — the engine grew to 17
+ * agent_id tools while this list still named 3, so get_agent_status /
+ * get_balance / the vault + omega tools failed with "agent_id Required" even
+ * though OMNIOLOGY_AGENT_ID was set.
+ */
 export const AGENT_ID_TOOLS = ["submit_entry", "get_my_history", "request_email_verification"];
+
+/** True when a tool's input schema declares an `agent_id` property. */
+export function toolTakesAgentId(tool: Tool): boolean {
+  const props = tool.inputSchema?.properties as Record<string, unknown> | undefined;
+  return !!props && Object.prototype.hasOwnProperty.call(props, "agent_id");
+}
 
 /**
  * When an agent_id is configured (OMNIOLOGY_AGENT_ID, written by `npx
  * omniology-init`), auto-fill it for the tools that need it so the LLM never
  * has to know or repeat its own id. Caller-supplied agent_id always wins.
+ *
+ * `knownAgentIdTools` is the runtime-derived set of tool names that take an
+ * agent_id (populated from `tools/list`); when omitted it falls back to the
+ * static seed list, so a call issued before the first list still injects for
+ * the core tools.
  */
 export function injectAgentId(
   name: string,
   args: Record<string, unknown>,
   agentId: string | undefined,
+  knownAgentIdTools?: ReadonlySet<string>,
 ): Record<string, unknown> {
-  if (agentId && AGENT_ID_TOOLS.includes(name) && !args.agent_id) {
+  const known = knownAgentIdTools ?? new Set(AGENT_ID_TOOLS);
+  if (agentId && known.has(name) && !args.agent_id) {
     return { ...args, agent_id: agentId };
   }
   return args;

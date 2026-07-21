@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { Keypair } from "@solana/web3.js";
 import { ed25519 } from "@noble/curves/ed25519";
 import bs58 from "bs58";
-import { loadKeypairFromPath, buildRegisterProof, friendlyBroadcastError, injectAgentId, REGISTER_DOMAIN } from "../src/signer.js";
+import { loadKeypairFromPath, buildRegisterProof, friendlyBroadcastError, injectAgentId, toolTakesAgentId, REGISTER_DOMAIN } from "../src/signer.js";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 let passed = 0, failed = 0;
 const check = (n: string, c: boolean, d = "") => {
@@ -68,6 +69,22 @@ check("injects agent_id for get_my_history", injectAgentId("get_my_history", {},
 check("does NOT override caller-supplied agent_id", injectAgentId("submit_entry", { agent_id: "MINE" }, "AID").agent_id === "MINE");
 check("does NOT inject for list_active_contests", injectAgentId("list_active_contests", {}, "AID").agent_id === undefined);
 check("no-op when no agent_id configured", injectAgentId("submit_entry", { payload: "p" }, undefined).agent_id === undefined);
+
+// toolTakesAgentId — schema-driven detection
+const mkTool = (name: string, props: Record<string, unknown>): Tool =>
+  ({ name, description: "", inputSchema: { type: "object", properties: props } } as unknown as Tool);
+check("toolTakesAgentId true when schema has agent_id", toolTakesAgentId(mkTool("get_agent_status", { agent_id: { type: "string" } })));
+check("toolTakesAgentId false when schema lacks agent_id", !toolTakesAgentId(mkTool("list_active_contests", { track: { type: "string" } })));
+
+// injectAgentId with a runtime-derived set (the real path): covers tools that
+// were NOT in the static seed (get_agent_status, get_balance) — the injection
+// gap that stranded Path-B agents with "agent_id Required".
+const known = new Set(["submit_entry", "get_my_history", "request_email_verification", "get_agent_status", "get_balance", "enroll_entry_vault"]);
+check("injects agent_id for get_agent_status via runtime set", injectAgentId("get_agent_status", {}, "AID", known).agent_id === "AID");
+check("injects agent_id for get_balance via runtime set", injectAgentId("get_balance", {}, "AID", known).agent_id === "AID");
+check("injects agent_id for enroll_entry_vault via runtime set", injectAgentId("enroll_entry_vault", {}, "AID", known).agent_id === "AID");
+check("runtime set still does NOT inject for a non-agent tool", injectAgentId("list_active_contests", {}, "AID", known).agent_id === undefined);
+check("runtime set still respects caller-supplied agent_id", injectAgentId("get_balance", { agent_id: "MINE" }, "AID", known).agent_id === "MINE");
 
 console.log(`\nSummary: passed ${passed}, failed ${failed}`);
 process.exit(failed > 0 ? 1 : 0);
