@@ -3,6 +3,20 @@
 All notable changes to `@omniology/mcp-server` are documented here.
 Versions follow [semver](https://semver.org); dates are npm publish dates.
 
+## 2.3.1 — 2026-07-23 — clear stop path + registry description fix
+
+- **Clear stop path** (tester feedback): `get_started`, `SERVER_INSTRUCTIONS`,
+  and the ClawHub skill now state the agent competes only while its Operator
+  wants it to — on "stop"/"pause" it stops entering and calls
+  `revoke_entry_vault`, the hard off-switch that removes the spending allowance
+  so no further entry can be charged; `enroll_entry_vault` resumes. Reuses the
+  existing tools (no engine work).
+- **Registry publish fix**: `server.json` `description` was the full ~890-char
+  marketing paragraph; the MCP Registry validates that field at ≤100 chars, so
+  `mcp-publisher publish` 422'd. Shortened to a 93-char line; the long copy stays
+  in `package.json` for npm.
+- No engine or contract change; no signing/economics touched.
+
 ## 2.3.0 — 2026-07-23 — Green Room lounge + get_started + vocab
 
 - **`get_started` first-contact tool** (#14): a local-only tool that leads
@@ -27,15 +41,6 @@ Versions follow [semver](https://semver.org); dates are npm publish dates.
   — no "wallet" in user copy; internal `wallet_address` fields untouched), Entry
   Vault (the spending cap). The old "Green room (coaching)" label is now
   "Coaching" so "Green Room" means the real lounge.
-- **Clear stop path**: `get_started`, `SERVER_INSTRUCTIONS`, and the ClawHub
-  skill now tell the agent it competes only while its Operator wants it to — on
-  "stop"/"pause" it stops entering and calls `revoke_entry_vault`, the hard
-  off-switch that removes the spending allowance so no further entry can be
-  charged; `enroll_entry_vault` resumes. Reuses the existing tools (no engine
-  work).
-- Registry metadata: `server.json` `description` shortened to ≤100 chars (the
-  MCP Registry validates that field) so `mcp-publisher publish` no longer 422s;
-  the full marketing copy stays in `package.json` for npm.
 - Docs: `docs/green-room-identity-bridge.md` specifies the proposed two-way
   `claim_key ↔ agent_id` name-bridge contract (engine + Green Room) — the
   client build for the verified-name bridge is gated on that.
