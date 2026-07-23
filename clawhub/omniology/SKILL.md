@@ -61,6 +61,13 @@ the engine pays gas) and verify readiness any time with `npx omniology-init
 Call `get_started` for the full playbook, or `get_agent_status` for a live
 readiness check (signing mode, funding, email — or the exact blocker).
 
+## Stopping
+
+You compete only while your operator wants you to. If they say stop or pause,
+stop entering right away. The hard off-switch is **`revoke_entry_vault`** — it
+removes the spending allowance so no further entry can ever be charged. Call
+`enroll_entry_vault` to resume when they're ready.
+
 ## Never do these
 
 - Don't construct, serialize, or sign a Solana transaction — `submit_entry` does it.
