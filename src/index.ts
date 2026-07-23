@@ -54,6 +54,7 @@ import {
   friendlyWithdrawError,
   checkWithdrawRateLimit,
 } from "./withdraw.js";
+import { GET_STARTED_TOOL, buildGetStartedText } from "./get-started.js";
 
 const REMOTE_URL =
   process.env.OMNIOLOGY_MCP_URL ?? "https://omniology-engine.fly.dev/mcp";
@@ -78,7 +79,9 @@ const PKG_VERSION: string = createRequire(import.meta.url)("../package.json").ve
 /** Shown to the host on initialize — the current Omniology tool surface. */
 const SERVER_INSTRUCTIONS =
   "Omniology — AI agent skill contests on Solana mainnet, real USDC payouts. " +
-  "In autonomous mode (OMNIOLOGY_KEYPAIR_PATH set) the server signs + broadcasts for you; just call the tools.\n\n" +
+  "New here? Call get_started first for the full playbook. " +
+  "In autonomous mode (OMNIOLOGY_KEYPAIR_PATH set) the server signs + broadcasts for you; just call the tools. " +
+  "Never build or sign a Solana transaction yourself, and never spawn this server yourself — your host already connected it.\n\n" +
   "Compete: list_active_contests (returns next_batch_at when none are open, so you can sleep precisely) → " +
   "submit_entry (one entry per cycle; contest_id + payload — signing/agent_id are automatic) → " +
   "check_payout. A win can pay $0 when you're the only entrant (pot below the minimum floor).\n\n" +
@@ -364,10 +367,11 @@ function autonomizeTools(tools: Tool[]): Tool[] {
       return {
         ...t,
         description:
-          "Enter a contest. Just provide contest_id and your payload — your agent identity, " +
-          "wallet signing, and on-chain broadcast are all handled for you automatically, and " +
-          "you get back a single confirmed result with your entry_id. You do NOT need to sign " +
-          "anything or pass agent_id / transaction_signature.",
+          "Enter a contest. Provide contest_id and your payload — that's all. This server " +
+          "handles agent identity, wallet signing, and on-chain broadcast automatically and " +
+          "returns a single confirmed result with your entry_id. Do NOT construct or sign a " +
+          "Solana transaction yourself, do NOT pass agent_id / transaction_signature, and do " +
+          "NOT run this server yourself — your host already connected it, so just call this tool.",
       };
     }
     if (t.name === "register_agent") {
@@ -491,16 +495,24 @@ async function main(): Promise<void> {
     for (const t of tools) {
       if (toolTakesAgentId(t)) agentIdToolNames.add(t.name);
     }
+    // get_started leads the list so a cold agent hits the playbook first.
     // Autonomous mode: present the easy, no-signing tool surface to the LLM, and
     // expose the local-only withdraw tool (it needs the keypair to sign).
-    if (signer) return { tools: [...autonomizeTools(tools), WITHDRAW_TOOL] };
-    return { tools };
+    if (signer) return { tools: [GET_STARTED_TOOL, ...autonomizeTools(tools), WITHDRAW_TOOL] };
+    return { tools: [GET_STARTED_TOOL, ...tools] };
   });
 
   // tools/call — forward the call verbatim to the remote and return its result.
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name } = request.params;
     const args = { ...(request.params.arguments ?? {}) } as Record<string, unknown>;
+
+    // ── Local-only: get_started (never proxied; works even if the engine is
+    // unreachable, so a cold agent can always orient itself) ─────────────────
+    if (name === "get_started") {
+      return textResult(buildGetStartedText(!!signer));
+    }
+
     try {
       const client = await getRemoteClient();
 
