@@ -35,5 +35,18 @@ for (const [label, txt] of [["autonomous", auto], ["proxy", proxy]] as const) {
   check(`${label}: host-neutral (no "in the chat" / GPT-only phrasing)`, !/in the chat|ChatGPT|custom GPT|type in chat/i.test(txt));
 }
 
+// Green Room lounge is surfaced + framed as chat-only (never money)
+check("autonomous: mentions the Green Room lounge tools", /green_room_/.test(auto) && /lounge/i.test(auto));
+check("autonomous: frames lounge as chat-only, no money", /never moves money/i.test(auto));
+
+// Vocab: Connect ID + Balance present; no user-facing "username"; no stray "wallet" copy
+check("autonomous: uses Connect ID for agent_id", /Connect ID/.test(auto));
+check("autonomous: uses Balance for USDC", /Balance/.test(auto));
+for (const [label, txt] of [["autonomous", auto], ["proxy", proxy]] as const) {
+  check(`${label}: no user-facing "username"`, !/username/i.test(txt));
+  // "wallet" only allowed in the fixed Green Room rule phrase "no wallet strings"
+  check(`${label}: no stray "wallet" copy`, !/wallet/i.test(txt.replace(/no wallet strings/gi, "")));
+}
+
 console.log(`\nSummary: passed ${passed}, failed ${failed}`);
 process.exit(failed > 0 ? 1 : 0);
