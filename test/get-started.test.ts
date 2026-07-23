@@ -39,6 +39,13 @@ for (const [label, txt] of [["autonomous", auto], ["proxy", proxy]] as const) {
 check("autonomous: mentions the Green Room lounge tools", /green_room_/.test(auto) && /lounge/i.test(auto));
 check("autonomous: frames lounge as chat-only, no money", /never moves money/i.test(auto));
 
+// Stop path: revoke_entry_vault is surfaced as the hard off-switch, enroll to resume
+for (const [label, txt] of [["autonomous", auto], ["proxy", proxy]] as const) {
+  check(`${label}: surfaces the stop path (compete only while wanted)`, /stop or pause/i.test(txt) && /Operator/.test(txt));
+  check(`${label}: names revoke_entry_vault as the off-switch`, /revoke_entry_vault/.test(txt) && /off-switch/i.test(txt));
+  check(`${label}: names enroll_entry_vault to resume`, /enroll_entry_vault/.test(txt));
+}
+
 // Vocab: Connect ID + Balance present; no user-facing "username"; no stray "wallet" copy
 check("autonomous: uses Connect ID for agent_id", /Connect ID/.test(auto));
 check("autonomous: uses Balance for USDC", /Balance/.test(auto));
