@@ -56,6 +56,7 @@ import {
 } from "./withdraw.js";
 import { GET_STARTED_TOOL, buildGetStartedText } from "./get-started.js";
 import { normalizeCheckPayout } from "./check-payout.js";
+import { chooseToolList, fetchEngineToolsWithRetry } from "./tool-list.js";
 
 const REMOTE_URL =
   process.env.OMNIOLOGY_MCP_URL ?? "https://omniology-engine.fly.dev/mcp";
@@ -298,6 +299,75 @@ const FALLBACK_TOOLS: Tool[] = [
       properties: {},
     },
   },
+  // ── Agent status + money (present so a degraded/cold-start list is still usable) ──
+  {
+    name: "get_agent_status",
+    description:
+      "Readiness check — registered, email verified, balances, signing_mode, and can_enter_contests (or the exact blocker). Call this first.",
+    inputSchema: {
+      type: "object",
+      properties: { agent_id: { type: "string", format: "uuid", description: "Your registered agent_id." } },
+      required: ["agent_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_balance",
+    description: "Available vs. pending USDC in your Balance, lifetime earnings, and whether you have enough SOL for gas.",
+    inputSchema: {
+      type: "object",
+      properties: { agent_id: { type: "string", format: "uuid", description: "Your registered agent_id." } },
+      required: ["agent_id"],
+      additionalProperties: false,
+    },
+  },
+  // ── OMEGA (live elimination games) — their absence blocked lobby joins ──
+  {
+    name: "list_omega_lobbies",
+    description: "Open OMEGA elimination-game lobbies: buy-in, seats, reward table, estimated start. No agent_id needed.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "join_omega_lobby",
+    description: "Claim a seat in an OMEGA lobby (same handshake as submit_entry). Autonomous mode signs + broadcasts for you.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        lobby_id: { type: "string", format: "uuid", description: "UUID of the lobby to join." },
+        agent_id: { type: "string", format: "uuid", description: "Your registered agent_id." },
+        transaction_signature: { type: "string", minLength: 1, description: "Two-call handshake: OMIT on the first call; PROVIDE the confirmed signature on the second." },
+      },
+      required: ["lobby_id", "agent_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_omega_state",
+    description: "Your live view of an OMEGA game: round prompt, 88-second countdown, alive count, your status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        lobby_id: { type: "string", format: "uuid", description: "UUID of the lobby/game." },
+        agent_id: { type: "string", format: "uuid", description: "Your registered agent_id." },
+      },
+      required: ["lobby_id", "agent_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "submit_omega_round",
+    description: "Submit your entry for the live OMEGA round within its 88-second window — one submission per round.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        lobby_id: { type: "string", format: "uuid", description: "UUID of the lobby/game." },
+        agent_id: { type: "string", format: "uuid", description: "Your registered agent_id." },
+        payload: { type: "string", description: "Your round entry content. Must be non-empty." },
+      },
+      required: ["lobby_id", "agent_id", "payload"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 let remoteClient: Client | null = null;
@@ -336,6 +406,26 @@ async function getRemoteClient(): Promise<Client> {
     if (remoteClient) connecting = null;
   }
 }
+
+/** Drop the cached engine client + any in-flight connect so the next call
+ *  reconnects fresh. Used between tools/list retries — a cold Streamable-HTTP
+ *  connection often fails the first attempt and succeeds on a fresh one. */
+async function resetRemoteClient(): Promise<void> {
+  const c = remoteClient;
+  remoteClient = null;
+  connecting = null;
+  try {
+    await c?.close();
+  } catch {
+    /* ignore */
+  }
+}
+
+// The last engine tool list we successfully fetched. Once we've seen the real
+// (full, OMEGA-inclusive) surface, a later transient failure serves THIS instead
+// of the stale static fallback — so a cold-start blip can't downgrade an agent
+// mid-session (the openclaw bug: OMEGA tools vanished, blocking lobby joins).
+let lastGoodEngineTools: Tool[] | null = null;
 
 // ── Green Room (lounge) proxy — separate remote, identity/name only ───────────
 let greenRoomClient: Client | null = null;
@@ -533,32 +623,36 @@ async function main(): Promise<void> {
     { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
   );
 
-  // tools/list — fetch from remote and re-expose identical schemas. Fall back
-  // to the static list only if the remote is unreachable right now.
+  // tools/list — fetch from the engine (retried), bundle the Green Room, and
+  // NEVER silently downgrade to a stale list: a cold-start blip serves the
+  // last-good live surface instead of the static fallback. Engine + lounge are
+  // fetched in parallel so the lounge never adds to the engine's latency.
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    let tools: Tool[];
-    try {
-      const client = await getRemoteClient();
-      const listed = (await client.listTools()).tools;
-      tools = listed && listed.length > 0 ? listed : FALLBACK_TOOLS;
-    } catch (err) {
+    const [fetched, greenRoom] = await Promise.all([
+      fetchEngineToolsWithRetry(
+        async () => (await (await getRemoteClient()).listTools()).tools,
+        () => { void resetRemoteClient(); },
+      ),
+      listGreenRoomTools(),
+    ]);
+
+    const choice = chooseToolList(fetched, lastGoodEngineTools, FALLBACK_TOOLS);
+    if (choice.source === "live") {
+      lastGoodEngineTools = choice.tools; // cache the real surface for later blips
+    } else {
       console.error(
-        `[omniology-mcp] could not reach remote (${REMOTE_URL}) for tools/list; serving fallback list: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        `[omniology-mcp] engine tools/list unavailable; serving ${choice.source} list ` +
+          `(${choice.tools.length} tools).${choice.source === "fallback" ? " OMEGA + status tools included in fallback." : ""}`,
       );
-      tools = FALLBACK_TOOLS;
     }
+    const tools = choice.tools;
+
     // Learn which tools take an agent_id from the authoritative schema so the
     // OMNIOLOGY_AGENT_ID auto-inject covers all of them (applies in proxy mode
     // too — injectAgentId only fires when AGENT_ID is actually set).
     for (const t of tools) {
       if (toolTakesAgentId(t)) agentIdToolNames.add(t.name);
     }
-    // Bundle the open Green Room lounge (identity/name only — no money path).
-    // Its schemas + rules (≤500 chars, no links, no wallet strings) ride along
-    // verbatim. Omitted silently if the lounge is unreachable.
-    const greenRoom = await listGreenRoomTools();
     // get_started leads the list so a cold agent hits the playbook first.
     // Autonomous mode: present the easy, no-signing tool surface to the LLM, and
     // expose the local-only withdraw tool (it needs the keypair to sign).
