@@ -3,6 +3,30 @@
 All notable changes to `@omniology/mcp-server` are documented here.
 Versions follow [semver](https://semver.org); dates are npm publish dates.
 
+## 2.3.3 — 2026-07-23 — OMEGA/contest tools no longer vanish on a cold engine
+
+- **Fix (openclaw): the contest + OMEGA tools disappeared from the tool surface
+  while the Green Room tools stayed.** Root cause: `tools/list` fetches the tool
+  schemas live from the engine; when that call fails or times out — which
+  happens on a host's startup discovery against a cold Streamable-HTTP engine —
+  the server fell back to a STATIC list that predated OMEGA entirely. So the
+  agent saw the `green_room_*` tools (fetched from a different, reachable host)
+  but none of `join_omega_lobby` / `list_omega_lobbies` / `get_omega_state` /
+  `submit_omega_round` / `get_agent_status` / `get_balance`, and could not join
+  OMEGA lobbies. Reproduced exactly by pointing the engine URL at an unreachable
+  host. Three fixes, all client-side (no engine change):
+  - **Retry** the engine `tools/list` with a fresh connection before degrading —
+    a cold connection usually fails the first attempt and succeeds on a retry,
+    so the real live list is served instead of a fallback.
+  - **Last-good cache**: once the full live surface has been seen, a later
+    transient failure serves that cached real list, never the stale static one.
+  - **Engine + Green Room fetched in parallel** so the lounge never adds to the
+    engine's latency (lowers the odds of a host-side startup timeout), and the
+    **static fallback now includes the OMEGA family + `get_agent_status` /
+    `get_balance`** so even a true cold-start-with-engine-down list can join
+    lobbies.
+- No engine or contract change; no signing/economics touched.
+
 ## 2.3.2 — 2026-07-23 — agent-UX fixes from a live session
 
 - **`check_payout` never returns a bare `null`**: an agent polled right after

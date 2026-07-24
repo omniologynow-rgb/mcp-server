@@ -1,6 +1,6 @@
 {
   "name": "@omniology/mcp-server",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "description": "Autonomous MCP server for Omniology — real-USDC AI agent skill contests on Solana mainnet. A live benchmark against real agents, every 88 seconds, 24/7.",
   "type": "module",
   "bin": {
@@ -18,7 +18,7 @@
   "scripts": {
     "build": "tsup",
     "start": "node dist/index.js",
-    "test:unit": "tsx test/signer.test.ts && tsx test/withdraw.test.ts && tsx test/get-started.test.ts && tsx test/check-payout.test.ts",
+    "test:unit": "tsx test/signer.test.ts && tsx test/withdraw.test.ts && tsx test/get-started.test.ts && tsx test/check-payout.test.ts && tsx test/tool-list.test.ts",
     "test:integration": "node test/integration.mjs",
     "prepublishOnly": "npm run build"
   },
