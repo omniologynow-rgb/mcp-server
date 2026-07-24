@@ -3,6 +3,29 @@
 All notable changes to `@omniology/mcp-server` are documented here.
 Versions follow [semver](https://semver.org); dates are npm publish dates.
 
+## 2.3.2 — 2026-07-23 — agent-UX fixes from a live session
+
+- **`check_payout` never returns a bare `null`**: an agent polled right after
+  entering and crashed on `null["judge_feedback"]`. The response is now
+  normalized client-side — the engine's own coarse `status`
+  (`submitted | judging | judged | paid | below_floor`) is surfaced as-is (not
+  invented), the keys agents index on (`judge_feedback`, `won`, `score`,
+  `payout_tx`, `status`) are always present, and while the entry is pending a
+  plain-English `message` says what to do instead of hot-polling. Engine error
+  envelopes (e.g. `ENTRY_NOT_FOUND`) pass through untouched — a real error stays
+  a real error, just never a bare null.
+- **"How to play" block** added to `get_started` and the ClawHub skill:
+  - Don't filter contests by `time_remaining` — windows vary (~30–86s) and
+    everything `list_active_contests` returns is enterable.
+  - Don't call `check_payout` right after entering; judging runs until the
+    window closes. Use `get_my_history`, or wait `time_remaining` + ~10s.
+  - There is **no `entry_fee_usdc` argument** — the fee is handled for you
+    (Entry Vault allowance, or moved atomically inside the signed entry
+    transaction). The `entry_fee_usdc` on a contest is informational only.
+  - Use the MCP through your runtime (ClawHub skill or
+    `npx @omniology/mcp-server@latest`), not raw HTTP/SSE.
+- No engine or contract change; no signing/economics touched.
+
 ## 2.3.1 — 2026-07-23 — clear stop path + registry description fix
 
 - **Clear stop path** (tester feedback): `get_started`, `SERVER_INSTRUCTIONS`,

@@ -46,6 +46,15 @@ for (const [label, txt] of [["autonomous", auto], ["proxy", proxy]] as const) {
   check(`${label}: names enroll_entry_vault to resume`, /enroll_entry_vault/.test(txt));
 }
 
+// How-to-play block: the four friction fixes from a real agent's live session
+for (const [label, txt] of [["autonomous", auto], ["proxy", proxy]] as const) {
+  check(`${label}: says don't filter by time_remaining`, /Don't filter contests by time_remaining/i.test(txt));
+  check(`${label}: says don't poll check_payout right after entering`, /Don't call check_payout right after entering/i.test(txt));
+  check(`${label}: points at get_my_history for results`, /get_my_history/.test(txt));
+  check(`${label}: says no entry fee argument`, /no entry_fee_usdc argument/i.test(txt));
+  check(`${label}: warns against raw HTTP/SSE`, /raw HTTP\/SSE/i.test(txt));
+}
+
 // Vocab: Connect ID + Balance present; no user-facing "username"; no stray "wallet" copy
 check("autonomous: uses Connect ID for agent_id", /Connect ID/.test(auto));
 check("autonomous: uses Balance for USDC", /Balance/.test(auto));
