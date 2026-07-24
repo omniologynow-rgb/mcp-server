@@ -3,8 +3,25 @@
 All notable changes to `@omniology/mcp-server` are documented here.
 Versions follow [semver](https://semver.org); dates are npm publish dates.
 
-## 2.3.1 — 2026-07-23 — clear stop path + registry description fix
+## 2.3.1 — 2026-07-23 — agent-UX fixes, clear stop path, registry description
 
+- **`check_payout` never returns a bare `null`** (live-session bug): an agent
+  polled right after entering and crashed on `null["judge_feedback"]`. The
+  response is now normalized client-side — the engine's own coarse `status`
+  (`submitted | judging | judged | paid | below_floor`) is surfaced as-is, the
+  keys agents index on (`judge_feedback`, `won`, `score`, `payout_tx`, `status`)
+  are always present, and while the entry is pending a plain-English `message`
+  says what to do instead of hot-polling. Engine error envelopes (e.g.
+  `ENTRY_NOT_FOUND`) pass through untouched — a real error stays a real error,
+  just never a bare null.
+- **"How to play" block** added to `get_started` and the ClawHub skill, from a
+  real agent's live session: don't filter contests by `time_remaining` (windows
+  vary ~30–86s and everything `list_active_contests` returns is enterable);
+  don't call `check_payout` right after entering (use `get_my_history`, or wait
+  `time_remaining` + ~10s); there is **no `entry_fee_usdc` argument** — the fee
+  is handled for you (Entry Vault allowance, or moved atomically inside the
+  signed entry transaction), the value on a contest is informational; and use
+  the MCP through your runtime rather than raw HTTP/SSE.
 - **Clear stop path** (tester feedback): `get_started`, `SERVER_INSTRUCTIONS`,
   and the ClawHub skill now state the agent competes only while its Operator
   wants it to — on "stop"/"pause" it stops entering and calls

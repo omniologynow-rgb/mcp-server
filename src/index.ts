@@ -55,6 +55,7 @@ import {
   checkWithdrawRateLimit,
 } from "./withdraw.js";
 import { GET_STARTED_TOOL, buildGetStartedText } from "./get-started.js";
+import { normalizeCheckPayout } from "./check-payout.js";
 
 const REMOTE_URL =
   process.env.OMNIOLOGY_MCP_URL ?? "https://omniology-engine.fly.dev/mcp";
@@ -647,6 +648,17 @@ async function main(): Promise<void> {
       }
 
       const result = await client.callTool({ name, arguments: callArgs });
+
+      // check_payout must NEVER hand back a bare null — an agent polling right
+      // after entering crashed on null["judge_feedback"]. Surface the engine's
+      // own status, guarantee the keys agents read, and add plain-English
+      // guidance while the entry is still being judged.
+      if (name === "check_payout") {
+        const parsed = parseResultJson(result as ToolResult);
+        const normalized = normalizeCheckPayout(parsed, callArgs.entry_id as string | undefined);
+        return textResult(JSON.stringify(normalized), (result as ToolResult).isError === true);
+      }
+
       return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

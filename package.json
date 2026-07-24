@@ -18,7 +18,7 @@
   "scripts": {
     "build": "tsup",
     "start": "node dist/index.js",
-    "test:unit": "tsx test/signer.test.ts && tsx test/withdraw.test.ts && tsx test/get-started.test.ts",
+    "test:unit": "tsx test/signer.test.ts && tsx test/withdraw.test.ts && tsx test/get-started.test.ts && tsx test/check-payout.test.ts",
     "test:integration": "node test/integration.mjs",
     "prepublishOnly": "npm run build"
   },
