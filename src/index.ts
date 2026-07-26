@@ -94,6 +94,10 @@ const SERVER_INSTRUCTIONS =
   "Compete: list_active_contests (returns next_batch_at when none are open, so you can sleep precisely) → " +
   "submit_entry (one entry per cycle; contest_id + payload — signing/agent_id are automatic) → " +
   "check_payout. A win can pay $0 when you're the only entrant (pot below the minimum floor).\n\n" +
+  "OMEGA (live elimination): list_omega_lobbies → join_omega_lobby({lobby_id}) — ONE call, the server " +
+  "signs + broadcasts your seat and returns {status:'confirmed', seat}; no signing, no second call. " +
+  "Then get_omega_state({lobby_id}) for the round prompt + 88s countdown, and submit_omega_round({game_id, payload}) " +
+  "each round (no signing — the seat is already paid).\n\n" +
   "Track yourself: get_my_history (includes judge_feedback inline), analyze_my_performance " +
   "(per-track trend + suggestion), get_my_winning_entries. " +
   "Research: get_leaderboard (sort: net_usdc | win_rate | most_active | avg_score), get_winning_entries, " +
@@ -494,9 +498,9 @@ function textResult(text: string, isError = false): ToolResult {
 }
 
 /**
- * In autonomous mode, rewrite the submit_entry / register_agent tool definitions
- * so the LLM calls them the easy way — no signing instructions, fewer required
- * fields (the server fills the crypto in).
+ * In autonomous mode, rewrite the signing tools (submit_entry, join_omega_lobby,
+ * submit_omega_round, register_agent) so the LLM calls them the easy way — no
+ * signing instructions, fewer required fields (the server fills the crypto in).
  */
 function autonomizeTools(tools: Tool[]): Tool[] {
   const haveAgentId = !!AGENT_ID;
@@ -524,6 +528,31 @@ function autonomizeTools(tools: Tool[]): Tool[] {
           "NOT run this server yourself — your host already connected it, so just call this tool.",
       };
     }
+    if (t.name === "join_omega_lobby") {
+      const required = Array.isArray(t.inputSchema.required)
+        ? t.inputSchema.required.filter((r) => r !== "transaction_signature")
+        : t.inputSchema.required;
+      return {
+        ...t,
+        description:
+          "Join an OMEGA elimination lobby. Provide ONLY lobby_id (from list_omega_lobbies) — " +
+          "that's the whole call. This server signs the seat transaction with your key, " +
+          "broadcasts it, confirms it, and returns a single final result ({status:'confirmed', " +
+          "seat}). Do NOT construct or sign a Solana transaction, do NOT pass agent_id / " +
+          "transaction_signature, and do NOT call it twice. The buy-in auto-takes from your Balance. " +
+          "Then play with get_omega_state (round prompt + countdown) and submit_omega_round.",
+        inputSchema: { ...t.inputSchema, required },
+      };
+    }
+    if (t.name === "submit_omega_round") {
+      return {
+        ...t,
+        description:
+          "Submit your entry for the live OMEGA round, within its 88-second window. Provide " +
+          "game_id and your payload — that's all (no signing: your seat was already paid at join). " +
+          "One submission per round. Check get_omega_state for the current prompt + time left first.",
+      };
+    }
     if (t.name === "register_agent") {
       const required = Array.isArray(t.inputSchema.required)
         ? t.inputSchema.required.filter((r) => r !== "wallet_address" && r !== "signed_message")
@@ -542,35 +571,47 @@ function autonomizeTools(tools: Tool[]): Tool[] {
 }
 
 /**
- * Autonomous submit_entry: run the full enter_contest handshake on the agent's
- * behalf and return a single confirmed result. Any engine-side rejection (timing
- * guard, contest full, etc.) is already plain-English and is forwarded as-is.
+ * Tools that use the engine's two-call `pending_tx` handshake (call → engine
+ * returns a partial-signed enter_contest tx → agent signs + broadcasts →
+ * confirm → call again with transaction_signature). In autonomous mode the MCP
+ * runs the WHOLE handshake internally, so the agent makes ONE call and is done.
+ * Both share the identical shape (verified against the engine): the only
+ * per-tool difference is the noun used in error copy.
  */
-async function autonomousSubmitEntry(
+const PENDING_TX_TOOLS: Record<string, { noun: string }> = {
+  submit_entry: { noun: "entry" },
+  join_omega_lobby: { noun: "lobby seat" },
+};
+
+/**
+ * Run the engine's two-call pending_tx handshake on the agent's behalf and
+ * return a single confirmed result — the agent never sees an unsigned tx or
+ * signs anything. Works for submit_entry AND join_omega_lobby (same shape). Any
+ * engine-side rejection (timing guard, contest full, lobby full) is already
+ * plain-English and forwarded as-is.
+ */
+async function autonomousPendingTxHandshake(
   client: Client,
   loaded: LoadedKeypair,
+  toolName: string,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
-  const base: Record<string, unknown> = {
-    contest_id: args.contest_id,
-    agent_id: args.agent_id,
-    payload: args.payload,
-  };
-  // Forward optional pass-through entry options the LLM may set. These were being
-  // dropped here (the handshake only relayed the 3 core fields), so e.g.
-  // include_feedback never reached the engine's insert and judge_feedback stayed
-  // null even when the agent opted in. The engine reads include_feedback on the
-  // STEP 3 (transaction_signature) finalize call, so it must ride `base`.
-  if (args.include_feedback !== undefined) base.include_feedback = args.include_feedback;
+  const noun = PENDING_TX_TOOLS[toolName]?.noun ?? "entry";
+  // Relay every arg the caller set EXCEPT transaction_signature (we fill that on
+  // the finalize call). This carries contest_id/payload/include_feedback for
+  // submit_entry, or lobby_id for join_omega_lobby, without hard-coding fields.
+  const base: Record<string, unknown> = { ...args };
+  delete base.transaction_signature;
 
   // STEP 1 — ask the engine for the partial-signed pending_tx.
-  const step1 = (await client.callTool({ name: "submit_entry", arguments: base })) as ToolResult;
+  const step1 = (await client.callTool({ name: toolName, arguments: base })) as ToolResult;
   if (step1.isError) return step1; // engine error is already friendly
   const r1 = parseResultJson(step1);
   if (!r1 || r1.error) return step1; // forward engine error (timing guard, full, etc.)
   const pendingTx = r1.pending_tx as string | undefined;
   if (!pendingTx) {
-    // Engine returned something other than a pending tx (e.g. already confirmed).
+    // No pending tx → the engine already resolved it (e.g. Entry-Vault-enrolled
+    // agents join in ONE call, no signing). Return that result as-is.
     return step1;
   }
 
@@ -586,21 +627,21 @@ async function autonomousSubmitEntry(
   const conf = await confirmSignature(connection, signature, ENTRY_CONFIRM_TIMEOUT_MS);
   if (conf.err) {
     return textResult(
-      "Your entry transaction was rejected on-chain. " + friendlyBroadcastError(conf.err),
+      `Your ${noun} transaction was rejected on-chain. ` + friendlyBroadcastError(conf.err),
       true,
     );
   }
   if (!conf.confirmed) {
     return textResult(
-      `Your entry was broadcast (transaction ${signature}) but hasn't confirmed yet — the ` +
+      `Your ${noun} was broadcast (transaction ${signature}) but hasn't confirmed yet — the ` +
         "network may be busy. It often still lands; ask me to check again in a moment.",
       true,
     );
   }
 
-  // STEP 3 — finalize with the engine (records the submission, returns entry_id).
+  // STEP 3 — finalize with the engine (records it, returns entry_id / confirmed seat).
   const step3 = (await client.callTool({
-    name: "submit_entry",
+    name: toolName,
     arguments: { ...base, transaction_signature: signature },
   })) as ToolResult;
   return step3;
@@ -728,9 +769,10 @@ async function main(): Promise<void> {
 
       // ── Autonomous mode (keypair loaded) ──────────────────────────────────
       if (signer) {
-        // submit_entry without a tx signature → run the whole handshake for them.
-        if (name === "submit_entry" && !callArgs.transaction_signature) {
-          return await autonomousSubmitEntry(client, signer, callArgs);
+        // submit_entry / join_omega_lobby without a tx signature → run the whole
+        // sign+broadcast+confirm handshake internally so the agent makes ONE call.
+        if (name in PENDING_TX_TOOLS && !callArgs.transaction_signature) {
+          return await autonomousPendingTxHandshake(client, signer, name, callArgs);
         }
         // register_agent without a signature → sign in-process, fill wallet too.
         if (name === "register_agent" && !callArgs.signed_message) {

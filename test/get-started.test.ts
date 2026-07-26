@@ -46,6 +46,14 @@ for (const [label, txt] of [["autonomous", auto], ["proxy", proxy]] as const) {
   check(`${label}: names enroll_entry_vault to resume`, /enroll_entry_vault/.test(txt));
 }
 
+// OMEGA join flow: one-call join, no signing, then state + round
+for (const [label, txt] of [["autonomous", auto], ["proxy", proxy]] as const) {
+  check(`${label}: documents list_omega_lobbies → join_omega_lobby`, /list_omega_lobbies/.test(txt) && /join_omega_lobby\(\{ lobby_id \}\)/.test(txt));
+  check(`${label}: says join is ONE call, no signing`, /THE WHOLE CALL/.test(txt) && /Do NOT sign anything, do NOT pass agent_id or transaction_signature/.test(txt));
+  check(`${label}: documents get_omega_state + submit_omega_round`, /get_omega_state/.test(txt) && /submit_omega_round/.test(txt));
+  check(`${label}: maps "enter/join the omega contest" to the two calls`, /enter\/join the omega contest/.test(txt));
+}
+
 // How-to-play block: the four friction fixes from a real agent's live session
 for (const [label, txt] of [["autonomous", auto], ["proxy", proxy]] as const) {
   check(`${label}: says don't filter by time_remaining`, /Don't filter contests by time_remaining/i.test(txt));

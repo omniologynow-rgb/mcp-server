@@ -3,6 +3,29 @@
 All notable changes to `@omniology/mcp-server` are documented here.
 Versions follow [semver](https://semver.org); dates are npm publish dates.
 
+## 2.3.4 — 2026-07-26 — join OMEGA lobbies in ONE call (internal signing)
+
+- **`join_omega_lobby` now signs + broadcasts internally**, like `submit_entry`.
+  Before, it returned an unsigned `pending_tx` and expected the agent to sign
+  externally (solders/solana-py) and call back with the signature — a real agent
+  burned ~10 minutes reverse-engineering `VersionedTransaction.populate`,
+  signature slots, and `partialSign`. Now, in autonomous mode
+  (`OMNIOLOGY_KEYPAIR_PATH` set), the agent makes ONE call —
+  `join_omega_lobby({ lobby_id })` — and the server runs the whole
+  sign→broadcast→confirm handshake with the local key, returning
+  `{status:'confirmed', seat}`. `agent_id` and `transaction_signature` are no
+  longer required on the tool. `submit_omega_round` needs no signing at all (the
+  seat is paid at join) and is a single call with `{game_id, payload}`. The
+  submit_entry / join_omega_lobby handshakes share one generalized code path.
+- **Self-documenting OMEGA flow**: `get_started`, `SERVER_INSTRUCTIONS`, and the
+  `join_omega_lobby` / `submit_omega_round` tool descriptions now spell out the
+  exact flow — `list_omega_lobbies` → `join_omega_lobby({lobby_id})` (one call,
+  no signing) → `get_omega_state` → `submit_omega_round` — so an agent reading
+  the tool list knows precisely what to do the first time. "Enter/join the omega
+  contest" maps to two obvious calls, no crypto plumbing, no CLI.
+- No engine or contract change; no signing/economics touched — this only moves
+  the signing the MCP already does for `submit_entry` onto `join_omega_lobby`.
+
 ## 2.3.3 — 2026-07-23 — OMEGA/contest tools no longer vanish on a cold engine
 
 - **Fix (openclaw): the contest + OMEGA tools disappeared from the tool surface
